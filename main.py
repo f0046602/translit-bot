@@ -9,7 +9,7 @@ if not TOKEN:
 
 bot = telebot.TeleBot(TOKEN)
 
-# -------- Render uchun kichik HTTP server (health check) ----------
+# ---------------- Render uchun HTTP server ----------------
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -17,7 +17,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
 
-    # Render ba'zida HEAD yuboradi — 501 bo'lmasin:
+    # Render health check ba'zida HEAD yuboradi
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -28,19 +28,35 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
-# --------- Translit (Lotin <-> Kirill) -----------
+# ---------------- Apostrof normalizatsiya ----------------
+def normalize_apostrophe(s: str) -> str:
+    # hammasini bitta ko'rinishga keltiramiz: ’
+    return (s.replace("`", "’")
+             .replace("'", "’")
+             .replace("ʻ", "’")   # U+02BB
+             .replace("ʼ", "’")   # U+02BC
+             .replace("‘", "’")
+             .replace("´", "’")
+             .replace("ʼ", "’"))
+
+# ---------------- Translit (Lotin <-> Kirill) ----------------
 LAT_MULTI = {
-    "sh":"ш","ch":"ч","yo":"ё","yu":"ю","ya":"я","ng":"нг",
-    "Sh":"Ш","Ch":"Ч","Yo":"Ё","Yu":"Ю","Ya":"Я","Ng":"Нг",
-    "o‘":"ў","g‘":"ғ","O‘":"Ў","G‘":"Ғ",
-    "oʻ":"ў","gʻ":"ғ","Oʻ":"Ў","Gʻ":"Ғ",
+    # 2-harfli
+    "sh": "ш", "ch": "ч", "yo": "ё", "yu": "ю", "ya": "я", "ng": "нг",
+    "Sh": "Ш", "Ch": "Ч", "Yo": "Ё", "Yu": "Ю", "Ya": "Я", "Ng": "Нг",
+
+    # o‘ / g‘ (har xil apostroflar normalizatsiyadan keyin o’/g’ bo'ladi)
+    "o’": "ў", "g’": "ғ", "O’": "Ў", "G’": "Ғ",
+    "oʻ": "ў", "gʻ": "ғ", "Oʻ": "Ў", "Gʻ": "Ғ",  # ehtiyot uchun
+    "o‘": "ў", "g‘": "ғ", "O‘": "Ў", "G‘": "Ғ",  # ehtiyot uchun
 }
+
 LAT1 = {
     "a":"а","b":"б","v":"в","g":"г","d":"д","e":"е","j":"ж","z":"з","i":"и","y":"й","k":"к","l":"л",
     "m":"м","n":"н","o":"о","p":"п","r":"р","s":"с","t":"т","u":"у","f":"ф","x":"х","q":"қ","h":"ҳ",
     "A":"А","B":"Б","V":"В","G":"Г","D":"Д","E":"Е","J":"Ж","Z":"З","I":"И","Y":"Й","K":"К","L":"Л",
     "M":"М","N":"Н","O":"О","P":"П","R":"Р","S":"С","T":"Т","U":"У","F":"Ф","X":"Х","Q":"Қ","H":"Ҳ",
-    "'":"’","`":"’","’":"’"
+    "’":"’"
 }
 
 CYR2 = {
@@ -70,33 +86,40 @@ def cyr_to_lat(s: str) -> str:
     return "".join(out)
 
 def lat_to_cyr(s: str) -> str:
+    s = normalize_apostrophe(s)
     out = []
     i = 0
     while i < len(s):
-        # 3 belgili tekshiruv (o‘, g‘ ba'zi holatlarda)
-        if i + 3 <= len(s) and s[i:i+3] in LAT_MULTI:
-            out.append(LAT_MULTI[s[i:i+3]])
-            i += 3
-            continue
-        # 2 belgili tekshiruv (sh, ch, yo, ...)
-        if i + 2 <= len(s) and s[i:i+2] in LAT_MULTI:
-            out.append(LAT_MULTI[s[i:i+2]])
-            i += 2
-            continue
+        # 2 belgili kombinatsiyalarni tekshiramiz
+        if i + 2 <= len(s):
+            two = s[i:i+2]
+            if two in LAT_MULTI:
+                out.append(LAT_MULTI[two])
+                i += 2
+                continue
         out.append(LAT1.get(s[i], s[i]))
         i += 1
     return "".join(out)
 
+# ---------------- Telegram handlers ----------------
 @bot.message_handler(commands=["start"])
 def start(m):
-    bot.reply_to(m, "Salom! Matn yuboring: Kirill ↔ Lotin o‘girib beraman ✅")
+    bot.reply_to(m, "Assalomu alekum! Men yuborilgan matini : Kirildi ↔️ Lotinga - Лотини ↔️ Крелга o‘girib beraman ✅")
 
 @bot.message_handler(content_types=["text"])
 def convert(m):
-    txt = m.text.strip()
+    txt = (m.text or "").strip()
     if not txt:
         return
-    res = cyr_to_lat(txt) if is_cyrillic_text(txt) else lat_to_cyr(txt)
+
+    # apostrofni bir xil qilamiz (kirill->lotin uchun ham foydali)
+    txt_norm = normalize_apostrophe(txt)
+
+    if is_cyrillic_text(txt_norm):
+        res = cyr_to_lat(txt_norm)
+    else:
+        res = lat_to_cyr(txt_norm)
+
     bot.reply_to(m, res)
 
 bot.infinity_polling()
