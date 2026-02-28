@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import telebot
 from telebot import types
-from googletrans import Translator
+from LocalTranslator import Translator
 
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
