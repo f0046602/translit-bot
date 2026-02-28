@@ -14,7 +14,16 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 translator = LocalTranslator()
 
-# ---------------- Render/Railway uchun HTTP server ----------------
+# ✅ Chapdagi "/" komandalar menyusi
+bot.set_my_commands([
+    types.BotCommand("start", "Botni ishga tushirish"),
+    types.BotCommand("menu", "Menyu"),
+    types.BotCommand("translit", "Translit rejimi"),
+    types.BotCommand("tarjima", "Tarjima rejimi"),
+    types.BotCommand("help", "Yordam"),
+])
+
+# ---------------- Health server (Railway/Render) ----------------
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -45,12 +54,10 @@ def normalize_apostrophe(s: str) -> str:
 LAT_MULTI = {
     "sh": "ш", "ch": "ч", "yo": "ё", "yu": "ю", "ya": "я", "ng": "нг",
     "Sh": "Ш", "Ch": "Ч", "Yo": "Ё", "Yu": "Ю", "Ya": "Я", "Ng": "Нг",
-
     "o’": "ў", "g’": "ғ", "O’": "Ў", "G’": "Ғ",
     "oʻ": "ў", "gʻ": "ғ", "Oʻ": "Ў", "Gʻ": "Ғ",
     "o‘": "ў", "g‘": "ғ", "O‘": "Ў", "G‘": "Ғ",
 }
-
 LAT1 = {
     "a":"а","b":"б","v":"в","g":"г","d":"д","e":"е","j":"ж","z":"з","i":"и","y":"й","k":"к","l":"л",
     "m":"м","n":"н","o":"о","p":"п","r":"р","s":"с","t":"т","u":"у","f":"ф","x":"х","q":"қ","h":"ҳ",
@@ -58,7 +65,6 @@ LAT1 = {
     "M":"М","N":"Н","O":"О","P":"П","R":"Р","S":"С","T":"Т","U":"У","F":"Ф","X":"Х","Q":"Қ","H":"Ҳ",
     "’":"’"
 }
-
 CYR2 = {
     "ш":"sh","ч":"ch","ё":"yo","ю":"yu","я":"ya",
     "Ш":"Sh","Ч":"Ch","Ё":"Yo","Ю":"Yu","Я":"Ya",
@@ -80,10 +86,7 @@ def is_cyrillic_text(s: str) -> bool:
     return False
 
 def cyr_to_lat(s: str) -> str:
-    out = []
-    for ch in s:
-        out.append(CYR2.get(ch, CYR1.get(ch, ch)))
-    return "".join(out)
+    return "".join(CYR2.get(ch, CYR1.get(ch, ch)) for ch in s)
 
 def lat_to_cyr(s: str) -> str:
     s = normalize_apostrophe(s)
@@ -104,13 +107,15 @@ def lat_to_cyr(s: str) -> str:
 USER = {}  # uid -> {"mode": "translit"/"translate", "route": ("uz","ru")}
 
 ROUTES_TEXT = {
-    "UZB ➜ RUS": ("uz", "ru"),
-    "RUS ➜ UZB": ("ru", "uz"),
-    "UZB ➜ ENG": ("uz", "en"),
-    "ENG ➜ UZB": ("en", "uz"),
-    "RUS ➜ ENG": ("ru", "en"),
-    "ENG ➜ RUS": ("en", "ru"),
+    "🇺🇿 UZ ➜ 🇷🇺 RU": ("uz", "ru"),
+    "🇷🇺 RU ➜ 🇺🇿 UZ": ("ru", "uz"),
+    "🇺🇿 UZ ➜ 🇬🇧 EN": ("uz", "en"),
+    "🇬🇧 EN ➜ 🇺🇿 UZ": ("en", "uz"),
+    "🇷🇺 RU ➜ 🇬🇧 EN": ("ru", "en"),
+    "🇬🇧 EN ➜ 🇷🇺 RU": ("en", "ru"),
 }
+
+MAIN_BTNS = {"🏠 Start", "🔁 Translit", "🌍 Tarjima", "ℹ️ Yordam", "⬅️ Orqaga"} | set(ROUTES_TEXT.keys())
 
 def state(uid: int):
     if uid not in USER:
@@ -125,73 +130,85 @@ def main_menu():
 
 def routes_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("UZB ➜ RUS", "RUS ➜ UZB")
-    kb.row("UZB ➜ ENG", "ENG ➜ UZB")
-    kb.row("RUS ➜ ENG", "ENG ➜ RUS")
+    kb.row("🇺🇿 UZ ➜ 🇷🇺 RU", "🇷🇺 RU ➜ 🇺🇿 UZ")
+    kb.row("🇺🇿 UZ ➜ 🇬🇧 EN", "🇬🇧 EN ➜ 🇺🇿 UZ")
+    kb.row("🇷🇺 RU ➜ 🇬🇧 EN", "🇬🇧 EN ➜ 🇷🇺 RU")
     kb.row("⬅️ Orqaga")
     return kb
 
 def pretty_route(r):
     return f"{r[0].upper()} ➜ {r[1].upper()}"
 
+def send(chat_id: int, text: str):
+    # ✅ har safar menu chiqib turadi
+    bot.send_message(chat_id, text, reply_markup=main_menu())
+
 # ---------------- Commands ----------------
 @bot.message_handler(commands=["start", "menu"])
 def cmd_start(m):
     st = state(m.from_user.id)
-    bot.send_message(
+    # ✅ MUHIM: start bosilganda doim translitga qaytadi
+    st["mode"] = "translit"
+
+    send(
         m.chat.id,
-        "👋 <b>Assalomu alaykum!</b>\n\n"
-        "✅ <b>Translit</b>: Kiril ↔ Lotin\n"
-        "✅ <b>Tarjima</b>: UZB/RUS/ENG (offline)\n\n"
-        f"📌 <b>Hozirgi rejim:</b> {'🔁 Translit' if st['mode']=='translit' else '🌍 Tarjima'}\n"
-        f"🔀 <b>Yo‘nalish:</b> {pretty_route(st['route'])}\n\n"
-        "👇 Pastdagi menyudan tanlang:",
-        reply_markup=main_menu()
+        "👋 <b>Xush kelibsiz!</b>\n\n"
+        "🔁 <b>Translit</b> — Kiril ↔ Lotin avtomatik.\n"
+        "🌍 <b>Tarjima</b> — faqat UZ/RU/EN.\n\n"
+        f"📌 <b>Hozirgi rejim:</b> 🔁 Translit\n"
+        f"🔀 <b>Tarjima yo‘nalishi:</b> {pretty_route(st['route'])}\n\n"
+        "👇 Pastdagi tugmalardan tanlang:"
     )
 
-# ---------------- Menu Buttons ----------------
+@bot.message_handler(commands=["translit"])
+def cmd_translit(m):
+    st = state(m.from_user.id)
+    st["mode"] = "translit"
+    send(m.chat.id, "✅ <b>Translit</b> rejimi yoqildi.\nMatn yuboring.")
+
+@bot.message_handler(commands=["tarjima"])
+def cmd_translate(m):
+    st = state(m.from_user.id)
+    st["mode"] = "translate"
+    bot.send_message(m.chat.id, "🌍 <b>Tarjima</b>\nYo‘nalishni tanlang:", reply_markup=routes_menu())
+
+@bot.message_handler(commands=["help"])
+def cmd_help(m):
+    send(
+        m.chat.id,
+        "ℹ️ <b>Yordam</b>\n\n"
+        "🔁 Translit: matn yuborsangiz avtomatik Kiril ↔ Lotin qiladi.\n"
+        "🌍 Tarjima: yo‘nalish tanlaysiz, keyin matn yuborasiz.\n\n"
+        "Komandalar: /start /menu /translit /tarjima /help"
+    )
+
+# ---------------- Buttons ----------------
 @bot.message_handler(func=lambda m: (m.text or "") == "🏠 Start")
 def btn_start(m):
     cmd_start(m)
 
 @bot.message_handler(func=lambda m: (m.text or "") == "🔁 Translit")
 def btn_translit(m):
-    st = state(m.from_user.id)
-    st["mode"] = "translit"
-    bot.send_message(m.chat.id, "✅ Translit rejimi yoqildi.\nMatn yuboring.", reply_markup=main_menu())
+    cmd_translit(m)
 
 @bot.message_handler(func=lambda m: (m.text or "") == "🌍 Tarjima")
 def btn_translate(m):
-    st = state(m.from_user.id)
-    st["mode"] = "translate"
-    bot.send_message(m.chat.id, "🌍 Yo‘nalishni tanlang:", reply_markup=routes_menu())
+    cmd_translate(m)
 
 @bot.message_handler(func=lambda m: (m.text or "") == "ℹ️ Yordam")
 def btn_help(m):
-    bot.send_message(
-        m.chat.id,
-        "ℹ️ <b>Yordam</b>\n\n"
-        "🔁 <b>Translit</b> — matn yuborsangiz avtomatik Kiril ↔ Lotin qiladi.\n"
-        "🌍 <b>Tarjima</b> — yo‘nalish tanlaysiz (UZ/RU/EN), keyin matn yuborasiz.\n\n"
-        "Menyu: /menu",
-        reply_markup=main_menu()
-    )
+    cmd_help(m)
 
 @bot.message_handler(func=lambda m: (m.text or "") == "⬅️ Orqaga")
 def btn_back(m):
-    bot.send_message(m.chat.id, "🏠 Menu:", reply_markup=main_menu())
+    send(m.chat.id, "🏠 Menu:")
 
-# ---------------- Route pick ----------------
 @bot.message_handler(func=lambda m: (m.text or "") in ROUTES_TEXT)
 def pick_route(m):
     st = state(m.from_user.id)
     st["mode"] = "translate"
     st["route"] = ROUTES_TEXT[m.text]
-    bot.send_message(
-        m.chat.id,
-        f"✅ Tanlandi: <b>{m.text}</b>\nEndi matn yuboring — tarjima qilib beraman.",
-        reply_markup=main_menu()
-    )
+    send(m.chat.id, f"✅ Tanlandi: <b>{m.text}</b>\nEndi matn yuboring — tarjima qilib beraman.")
 
 # ---------------- Text handler ----------------
 @bot.message_handler(content_types=["text"])
@@ -200,8 +217,9 @@ def on_text(m):
     if not txt:
         return
 
-    # Agar tugma matnlari bo'lsa, yuqoridagi handlerlar ishlaydi.
-    # Bu yerda "oddiy matn"ni qayta ishlaymiz.
+    # Menyu tugmalarini bu handler qayta ishlamasin
+    if txt in MAIN_BTNS:
+        return
 
     st = state(m.from_user.id)
 
@@ -209,17 +227,16 @@ def on_text(m):
         src, dst = st["route"]
         try:
             out = translator.translate(txt, src=src, dst=dst)
-            bot.reply_to(m, out)
-        except Exception as e:
-            bot.reply_to(m, "❌ Tarjima xatolik berdi. /menu orqali qayta yo‘nalish tanlang.")
+            send(m.chat.id, out)
+        except Exception:
+            send(m.chat.id, "❌ Tarjima xatolik berdi. 🌍 Tarjima tugmasidan yo‘nalishni qayta tanlang.")
         return
 
-    # Translitsiya
+    # Default: translit
     txt_norm = normalize_apostrophe(txt)
     if is_cyrillic_text(txt_norm):
-        res = cyr_to_lat(txt_norm)
+        send(m.chat.id, cyr_to_lat(txt_norm))
     else:
-        res = lat_to_cyr(txt_norm)
-    bot.reply_to(m, res)
+        send(m.chat.id, lat_to_cyr(txt_norm))
 
 bot.infinity_polling(skip_pending=True)
