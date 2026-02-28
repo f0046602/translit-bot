@@ -1,7 +1,7 @@
 # local_translator.py
-# Offline tarjima: UZB <-> RUS <-> ENG (MarianMT / OPUS)
-# Birinchi ishga tushganda modellar yuklanadi (internet kerak).
-# Keyin cache'dan ishlaydi.
+# Offline tarjima: UZ <-> RU <-> EN (Helsinki-NLP OPUS-MT)
+# 1-marta ishga tushganda model yuklab olinadi (internet kerak).
+# Keyin cache orqali ishlaydi.
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -12,89 +12,63 @@ from transformers import MarianMTModel, MarianTokenizer
 
 
 @dataclass
-class _ModelPack:
-    tokenizer: MarianTokenizer
-    model: MarianMTModel
+class _Pack:
+    tok: MarianTokenizer
+    mdl: MarianMTModel
 
 
 class LocalTranslator:
-    """
-    UZ/RU/EN o'rtasida offline tarjima.
-    Supported routes (default):
-      uz->ru, ru->uz,
-      ru->en, en->ru,
-      en->ru->uz (en->uz orqali),
-      uz->ru->en (uz->en orqali)
-    """
-
     def __init__(self, device: str | None = None):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
 
-        # Eng ishonchli OPUS-MT yo'nalishlari:
-        # (src, dst) -> HF model name
+        # To'g'ridan-to'g'ri yo'nalishlar (eng stabil)
         self.model_map: Dict[Tuple[str, str], str] = {
             ("uz", "ru"): "Helsinki-NLP/opus-mt-uz-ru",
             ("ru", "uz"): "Helsinki-NLP/opus-mt-ru-uz",
             ("ru", "en"): "Helsinki-NLP/opus-mt-ru-en",
             ("en", "ru"): "Helsinki-NLP/opus-mt-en-ru",
         }
+        self.cache: Dict[Tuple[str, str], _Pack] = {}
 
-        self._cache: Dict[Tuple[str, str], _ModelPack] = {}
-
-    def _get_pack(self, src: str, dst: str) -> _ModelPack:
+    def _load(self, src: str, dst: str) -> _Pack:
         key = (src, dst)
-        if key in self._cache:
-            return self._cache[key]
-
-        if key not in self.model_map:
-            raise ValueError(f"Route not supported: {src}->{dst}")
+        if key in self.cache:
+            return self.cache[key]
 
         name = self.model_map[key]
         tok = MarianTokenizer.from_pretrained(name)
         mdl = MarianMTModel.from_pretrained(name).to(self.device)
         mdl.eval()
 
-        pack = _ModelPack(tokenizer=tok, model=mdl)
-        self._cache[key] = pack
+        pack = _Pack(tok=tok, mdl=mdl)
+        self.cache[key] = pack
         return pack
 
     @torch.inference_mode()
-    def _translate_one_step(self, text: str, src: str, dst: str) -> str:
-        pack = self._get_pack(src, dst)
-        batch = pack.tokenizer([text], return_tensors="pt", truncation=True, max_length=512).to(self.device)
-
-        gen = pack.model.generate(
-            **batch,
-            max_new_tokens=256,
-            num_beams=4,
-            early_stopping=True
-        )
-        out = pack.tokenizer.batch_decode(gen, skip_special_tokens=True)[0]
-        return out
+    def _step(self, text: str, src: str, dst: str) -> str:
+        pack = self._load(src, dst)
+        batch = pack.tok([text], return_tensors="pt", truncation=True, max_length=512).to(self.device)
+        out_ids = pack.mdl.generate(**batch, num_beams=4, max_new_tokens=256, early_stopping=True)
+        return pack.tok.batch_decode(out_ids, skip_special_tokens=True)[0]
 
     def translate(self, text: str, src: str, dst: str) -> str:
-        src = src.lower().strip()
-        dst = dst.lower().strip()
-
+        src, dst = src.lower().strip(), dst.lower().strip()
         if src == dst:
             return text
 
-        # 1-qadam: to'g'ridan-to'g'ri bo'lsa
+        # direct
         if (src, dst) in self.model_map:
-            return self._translate_one_step(text, src, dst)
+            return self._step(text, src, dst)
 
-        # 2-qadam: yo'l topish (pivot)
-        # en<->uz uchun: en->ru->uz yoki uz->ru->en
-        if src == "en" and dst == "uz":
-            ru = self._translate_one_step(text, "en", "ru")
-            uz = self._translate_one_step(ru, "ru", "uz")
-            return uz
-
+        # pivot (EN<->UZ ni RU orqali qilamiz)
         if src == "uz" and dst == "en":
-            ru = self._translate_one_step(text, "uz", "ru")
-            en = self._translate_one_step(ru, "ru", "en")
-            return en
+            ru = self._step(text, "uz", "ru")
+            return self._step(ru, "ru", "en")
+
+        if src == "en" and dst == "uz":
+            ru = self._step(text, "en", "ru")
+            return self._step(ru, "ru", "uz")
 
         raise ValueError(f"Route not supported: {src}->{dst}")
