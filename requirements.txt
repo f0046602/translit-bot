@@ -1,2 +1,4 @@
 pyTelegramBotAPI
-googletrans==4.0.0-rc1
+transformers>=4.38.0
+sentencepiece>=0.1.99
+torch
