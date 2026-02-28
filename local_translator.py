@@ -1,8 +1,4 @@
 # local_translator.py
-# Offline tarjima: UZ <-> RU <-> EN (Helsinki-NLP OPUS-MT)
-# 1-marta ishga tushganda model yuklab olinadi (internet kerak).
-# Keyin cache orqali ishlaydi.
-
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -18,12 +14,16 @@ class _Pack:
 
 
 class LocalTranslator:
+    """
+    Offline tarjima: UZ <-> RU <-> EN
+    Direct: uz<->ru, ru<->en
+    Pivot: uz<->en (ru orqali)
+    """
     def __init__(self, device: str | None = None):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
 
-        # To'g'ridan-to'g'ri yo'nalishlar (eng stabil)
         self.model_map: Dict[Tuple[str, str], str] = {
             ("uz", "ru"): "Helsinki-NLP/opus-mt-uz-ru",
             ("ru", "uz"): "Helsinki-NLP/opus-mt-ru-uz",
@@ -36,12 +36,10 @@ class LocalTranslator:
         key = (src, dst)
         if key in self.cache:
             return self.cache[key]
-
         name = self.model_map[key]
         tok = MarianTokenizer.from_pretrained(name)
         mdl = MarianMTModel.from_pretrained(name).to(self.device)
         mdl.eval()
-
         pack = _Pack(tok=tok, mdl=mdl)
         self.cache[key] = pack
         return pack
@@ -58,11 +56,10 @@ class LocalTranslator:
         if src == dst:
             return text
 
-        # direct
         if (src, dst) in self.model_map:
             return self._step(text, src, dst)
 
-        # pivot (EN<->UZ ni RU orqali qilamiz)
+        # Pivot: uz<->en ru orqali
         if src == "uz" and dst == "en":
             ru = self._step(text, "uz", "ru")
             return self._step(ru, "ru", "en")
